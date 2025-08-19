@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Calculadora de Tarifas — Colombia (Gratis)</title>
+
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.css"/>
+
+  <style>
+    :root{ --accent:#1976D2; --card:#ffffff; --bg:#f4f6f8; }
+    *{ box-sizing: border-box; }
+    body{ margin:0; font-family:Inter,Arial,Helvetica,sans-serif; background:var(--bg); color:#213547; }
+    header{ padding:12px 16px; background:linear-gradient(90deg,var(--accent),#42a5f5); color:white; }
+    header h1{ margin:0; font-size:18px; }
+    #app{ display:flex; flex-direction:column; gap:12px; padding:12px; max-width:1100px; margin:12px auto; }
+    #map{ height:56vh; border-radius:10px; overflow:hidden; box-shadow:0 6px 18px rgba(0,0,0,0.08); }
+    .panel{ display:grid; grid-template-columns: 1fr 340px; gap:12px; }
+    .card{ background:var(--card); padding:12px; border-radius:10px; box-shadow:0 2px 8px rgba(16,24,40,0.06); }
+    label{ display:block; font-weight:600; margin-bottom:6px; font-size:14px; }
+    .controls input[type="text"], .controls select { width:100%; padding:9px 10px; border-radius:7px; border:1px solid #e0e6ee; font-size:14px; }
+    .controls button { width:100%; padding:10px; border-radius:7px; border:none; background:var(--accent); color:white; font-weight:700; cursor:pointer; margin-top:8px; }
+    .controls button[disabled]{ opacity:0.6; cursor:not-allowed; }
+    .autocomplete-list{ background:white; border:1px solid #e6eef8; border-radius:6px; max-height:160px; overflow:auto; margin-top:6px; }
+    .autocomplete-item{ padding:8px 10px; cursor:pointer; border-bottom:1px solid #f1f6fb; }
+    .autocomplete-item:last-child{ border-bottom:none; }
+    .autocomplete-item:hover{ background:#f2f8ff; }
+    .small{ font-size:13px; color:#556677; }
+    #detalles .line{ display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px dashed #eef4fb; }
+    #detalles .line:last-child{ border-bottom:none; }
+    .historial-item{ padding:8px 6px; border-bottom:1px solid #f1f6fb; font-size:13px; }
+    .tag{ display:inline-block; padding:4px 8px; border-radius:999px; background:#eef6ff; color:var(--accent); font-weight:700; font-size:12px; }
+    @media(max-width:960px){ .panel{ grid-template-columns: 1fr; } #map{ height:50vh; } }
+
+    /* Popup Tarifa Estimada */
+    .popup-overlay{ position:fixed; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.45); display:none; justify-content:center; align-items:center; z-index:9999; }
+    .popup-card{ background:white; padding:28px 26px; border-radius:12px; box-shadow:0 8px 30px rgba(0,0,0,0.28); text-align:center; width:360px; max-width:92%; }
+    .popup-card h2{ margin:0 0 12px 0; font-size:18px; color:#213547; }
+    .popup-tarifa{ font-size:48px; font-weight:800; color:var(--accent); margin:6px 0 12px 0; }
+    .popup-card .small{ color:#556677; font-size:13px; margin-bottom:12px; }
+    .popup-card button{ background:var(--accent); color:white; border:none; padding:10px 18px; border-radius:8px; cursor:pointer; font-weight:700; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🚖 Calculadora de Tarifas — Solo Colombia (OpenStreetMap / OSRM)</h1>
+  </header>
+
+  <div id="app">
+    <div id="map" class="card"></div>
+
+    <div class="panel">
+      <!-- LEFT: Controls & result -->
+      <div class="card controls">
+        <label>Origen (solo Colombia)</label>
+        <input id="origen" type="text" placeholder="Ej: Parque de la 93, Bogotá" autocomplete="off" />
+        <div id="listaOrigen" class="autocomplete-list" style="display:none"></div>
+
+        <label style="margin-top:8px">Destino (solo Colombia)</label>
+        <input id="destino" type="text" placeholder="Ej: Aeropuerto El Dorado, Bogotá" autocomplete="off" />
+        <div id="listaDestino" class="autocomplete-list" style="display:none"></div>
+
+
+
+
+        <label style="margin-top:8px">Vehículo</label>
+        <select id="vehiculo">
+          <option value="moto">Moto</option>
+          <option value="carro" selected>Carro</option>
+          <option value="xl">Carro XL</option>
+        </select>
+
+        <button id="btnCalcular">Calcular ruta y tarifa</button>
+<!-- Botón Limpiar -->
+<button id="clearButton" class="btn">Limpiar</button>
+
+
+        <div id="infoSmall" class="small" style="margin-top:8px">Búsqueda limitada a Colombia. Selecciona una sugerencia si aparece (mejor exactitud).</div>
+      </div>
+
+      <!-- RIGHT: Result & History -->
+      <div style="display:flex; flex-direction:column; gap:12px;">
+        <div class="card">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <strong>Resumen del viaje</strong>
+            <span id="tagZona" class="tag">Zona: —</span>
+          </div>
+          <div id="detalles" style="margin-top:10px;">
+            <div class="small">Aún no calculado.</div>
+          </div>
+        </div>
+
+        <!-- Frase motivadora -->
+        <div class="card">
+          <strong>Frase motivadora</strong>
+          <div id="fraseText" class="small" style="margin-top:8px; min-height:44px; font-size:15px; color:#1f2d3d;"></div>
+        </div>
+
+        <div class="card">
+          <strong>Historial (últimos 5)</strong>
+          <div id="historial" style="margin-top:8px; max-height:200px; overflow:auto;"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Popup Tarifa Estimada -->
+  <div id="popup" class="popup-overlay" role="dialog" aria-hidden="true">
+    <div class="popup-card">
+      <h2>Tarifa estimada</h2>
+      <div id="popup-tarifa" class="popup-tarifa">$0</div>
+      <div id="popup-frase" class="small">Valor estimado según ruta y condiciones simuladas</div>
+      <button id="popup-cerrar">Cerrar</button>
+    </div>
+  </div>
+
+  <!-- Leaflet & Routing Machine -->
+  <script src="https://unpkg.com/leaflet/dist/leaflet.js"></script>
+  <script src="https://unpkg.com/leaflet-routing-machine/dist/leaflet-routing-machine.js"></script>
+
+  <script>
+  /* ========== Config inicial ========== */
+  const MAP_CENTER = [4.7110, -74.0721]; // Bogotá
+  const MAP_ZOOM = 6;
+
+  // Tarifas por vehículo (editable)
+  const VEH_T = {
+    moto:  { base: 1500, km: 600, min: 100, minimo: 4000 },
+    carro: { base: 2500, km: 1000, min: 180, minimo: 6000 },
+    xl:    { base: 4000, km: 1400, min: 300, minimo: 10000 }
+  };
+
+  // Zonas de tráfico simuladas
+  const TRAF_ZONAS = [
+    { name: "Bogotá - Centro", coords: [4.611, -74.070], r: 25000, factor: 1.5 },
+    { name: "Medellín - Área", coords: [6.244, -75.574], r: 20000, factor: 1.4 },
+    { name: "Cali - Área", coords: [3.437, -76.522], r: 15000, factor: 1.35 },
+    { name: "Barranquilla - Área", coords: [10.968, -74.789], r: 12000, factor: 1.3 }
+  ];
+
+  /* ========== Lista de frases (100) ========== */
+  const FRASES = [
+    "Tu esfuerzo mueve a tu familia y al país.",
+    "Cada kilómetro recorrido es un logro más.",
+    "Eres el motor que impulsa los sueños de los tuyos.",
+    "Tu trabajo tiene más valor del que imaginas.",
+    "Hoy llevas más que pasajeros, llevas historias.",
+    "Con tu esfuerzo, el mundo se mueve.",
+    "Eres ejemplo de constancia y disciplina.",
+    "Tu familia se enorgullece de ti.",
+    "Gracias a tu labor, muchos llegan seguros.",
+    "El camino puede ser largo, pero tus metas son grandes.",
+    "Cada día al volante es una oportunidad para crecer.",
+    "Tú haces posible que las ciudades nunca se detengan.",
+    "El respeto que siembras en el camino vuelve a ti.",
+    "Conduces sueños, no solo pasajeros.",
+    "Tu trabajo es digno y admirable.",
+    "Hoy es un buen día para avanzar con confianza.",
+    "Tu esfuerzo diario es semilla de prosperidad.",
+    "Eres más fuerte de lo que piensas.",
+    "Cada jornada es un paso hacia tus metas.",
+    "El volante en tus manos es una herramienta de futuro.",
+    "La paciencia y la constancia te definen.",
+    "Tu labor construye caminos de esperanza.",
+    "El trabajo duro de hoy es el éxito de mañana.",
+    "Con tu esfuerzo inspiras a los tuyos.",
+    "Eres parte del motor de la economía.",
+    "Cada viaje es una oportunidad para crecer.",
+    "Nunca olvides lo importante que eres.",
+    "Tu trabajo tiene un impacto real en la vida de muchos.",
+    "Hoy es un buen día para sonreír mientras conduces.",
+    "El sacrificio de hoy es el orgullo de mañana.",
+    "Gracias a ti, la vida de muchos es más fácil.",
+    "Eres grande porque nunca te rindes.",
+    "Cada pasajero que transportas es parte de tu historia.",
+    "Tu dedicación merece reconocimiento.",
+    "Con cada viaje demuestras tu valentía.",
+    "Hoy recuerda que tu esfuerzo no pasa desapercibido.",
+    "Tu constancia es el ejemplo de tus hijos.",
+    "Con tu trabajo demuestras amor por los tuyos.",
+    "Tú eres inspiración para otros.",
+    "Nunca subestimes lo que haces cada día.",
+    "Tu camino está lleno de aprendizajes.",
+    "La disciplina de hoy es la libertad de mañana.",
+    "Eres parte esencial de tu comunidad.",
+    "Gracias por tu compromiso diario.",
+    "Tu labor mueve corazones y familias.",
+    "El esfuerzo es el puente hacia tus metas.",
+    "Hoy llevas más que pasajeros: llevas confianza.",
+    "Conducir es tu arte, y lo haces con excelencia.",
+    "Tu ejemplo inspira respeto.",
+    "Eres orgullo para quienes te rodean.",
+    "Cada viaje es una semilla de esperanza.",
+    "Tu constancia es tu mayor fortaleza.",
+    "Hoy será un gran día, sigue adelante.",
+    "Eres el héroe silencioso de la movilidad.",
+    "Tus manos construyen el futuro de tu familia.",
+    "Tu sacrificio tiene recompensa.",
+    "Eres el motor de tus propios sueños.",
+    "Hoy conduces hacia un futuro mejor.",
+    "Tu esfuerzo hace la diferencia.",
+    "Con cada kilómetro, avanzas hacia tus metas.",
+    "Tu familia confía en ti, y tú no los defraudas.",
+    "Eres ejemplo de lucha y perseverancia.",
+    "Hoy recuerda que eres importante.",
+    "Con cada día que trabajas, creas oportunidades.",
+    "Tus hijos ven en ti a un héroe.",
+    "Nunca dudes del valor de tu trabajo.",
+    "Hoy puedes estar cansado, pero no derrotado.",
+    "Tu esfuerzo es sinónimo de amor.",
+    "Conduces vidas, conduces confianza.",
+    "Tu trabajo es esencial para todos.",
+    "Cada jornada es un triunfo más.",
+    "Hoy avanzas hacia tus sueños.",
+    "Tu fortaleza inspira respeto.",
+    "El futuro se construye con tu trabajo diario.",
+    "Eres símbolo de disciplina y coraje.",
+    "Cada pasajero agradece tu labor.",
+    "Hoy es un día más para crecer.",
+    "Eres grande porque cumples tu propósito.",
+    "Tus esfuerzos son semillas de éxito.",
+    "Tu familia sonríe gracias a ti.",
+    "El mundo necesita de tu labor.",
+    "Hoy conduce con orgullo y esperanza.",
+    "Eres parte vital de la sociedad.",
+    "Nunca subestimes lo que logras a diario.",
+    "Cada sacrificio tiene sentido.",
+    "Tu disciplina forja tu destino.",
+    "Hoy es un buen día para avanzar.",
+    "Tu ejemplo es inspiración.",
+    "El camino es duro, pero tu fuerza es mayor.",
+    "Tus esfuerzos de hoy son los frutos de mañana.",
+    "Eres grande porque nunca te detienes.",
+    "Cada día sumas experiencias valiosas.",
+    "El volante en tus manos es símbolo de responsabilidad.",
+    "Tu constancia es admirable.",
+    "Hoy mereces sentir orgullo por lo que haces.",
+    "Con tu esfuerzo, abres caminos para otros.",
+    "Eres un verdadero ejemplo de trabajo.",
+    "Tu dedicación construye futuro.",
+    "Cada kilómetro cuenta para tus sueños.",
+    "Hoy tu familia piensa en ti con amor.",
+    "El éxito está en tu esfuerzo constante."
+  ];
+
+  /* ========== Inicializar mapa ========== */
+  const map = L.map('map').setView(MAP_CENTER, MAP_ZOOM);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { attribution: '© OpenStreetMap contributors' }).addTo(map);
+
+  // Mostrar zonas de tráfico en el mapa (visual)
+  TRAF_ZONAS.forEach(z => {
+    const color = z.factor >= 1.5 ? '#d32f2f' : (z.factor >= 1.4 ? '#ff9800' : '#388e3c');
+    L.circle(z.coords, { radius: z.r, color, fillColor: color, fillOpacity: 0.12, weight:2 }).addTo(map).bindPopup(`${z.name} — factor ${z.factor}x`);
+  });
+
+  /* ========== Autocomplete (Nominatim limitado a Colombia) ========== */
+  const origenInput = document.getElementById('origen');
+  const destinoInput = document.getElementById('destino');
+  const listaOrigen = document.getElementById('listaOrigen');
+  const listaDestino = document.getElementById('listaDestino');
+
+  let debounceTimerOrigen = null;
+  let debounceTimerDestino = null;
+  function debounce(fn, wait=250){ clearTimeout(this._t); this._t = setTimeout(fn, wait); }
+
+  async function nominatimSearch(q){
+    const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=co&limit=6&q=${encodeURIComponent(q)}`;
+    const r = await fetch(url, { headers: { 'Accept-Language': 'es' }});
+    const j = await r.json();
+    return j;
+  }
+
+  function buildList(items, container, inputEl){
+    container.innerHTML = '';
+    if (!items || items.length === 0){ container.style.display='none'; return; }
+    items.forEach(it => {
+      const d = document.createElement('div');
+      d.className = 'autocomplete-item';
+      d.textContent = it.display_name;
+      d.onclick = () => {
+        inputEl.value = it.display_name;
+        inputEl.dataset.lat = it.lat;
+        inputEl.dataset.lon = it.lon;
+        container.style.display = 'none';
+      };
+      container.appendChild(d);
+    });
+    container.style.display = 'block';
+  }
+
+  origenInput.addEventListener('input', (e)=>{
+    const q = e.target.value.trim();
+    clearTimeout(debounceTimerOrigen);
+    if (!q){ listaOrigen.style.display='none'; return; }
+    debounceTimerOrigen = setTimeout(async ()=>{
+      try{ const res = await nominatimSearch(q); buildList(res, listaOrigen, origenInput); }catch(err){ console.warn(err); }
+    }, 260);
+  });
+
+  destinoInput.addEventListener('input', (e)=>{
+    const q = e.target.value.trim();
+    clearTimeout(debounceTimerDestino);
+    if (!q){ listaDestino.style.display='none'; return; }
+    debounceTimerDestino = setTimeout(async ()=>{
+      try{ const res = await nominatimSearch(q); buildList(res, listaDestino, destinoInput); }catch(err){ console.warn(err); }
+    }, 260);
+  });
+
+  // click fuera oculta listas
+  document.addEventListener('click', (ev)=>{
+    if (!ev.target.closest('.autocomplete-list') && ev.target !== origenInput) listaOrigen.style.display='none';
+    if (!ev.target.closest('.autocomplete-list') && ev.target !== destinoInput) listaDestino.style.display='none';
+  });
+
+  /* ========== Helpers geocoding (usa dataset lat/lon si existe) ========== */
+  async function geocodeColombia(inputOrText){
+    if (inputOrText && inputOrText.dataset && inputOrText.dataset.lat && inputOrText.dataset.lon){
+      return [parseFloat(inputOrText.dataset.lat), parseFloat(inputOrText.dataset.lon)];
+    }
+    const txt = (typeof inputOrText === 'string') ? inputOrText : inputOrText.value;
+    const url = `https://nominatim.openstreetmap.org/search?format=json&addressdetails=1&countrycodes=co&limit=1&q=${encodeURIComponent(txt)}`;
+    const r = await fetch(url, { headers: { 'Accept-Language': 'es' }});
+    const j = await r.json();
+    if (!j || j.length === 0) throw new Error('No se encontró dentro de Colombia: '+txt);
+    return [parseFloat(j[0].lat), parseFloat(j[0].lon)];
+  }
+
+  /* ========== Routing y cálculo ========== */
+  let controlRuta = null;
+  const btnCalcular = document.getElementById('btnCalcular');
+  const detallesDiv = document.getElementById('detalles');
+  const tagZona = document.getElementById('tagZona');
+
+  // distancia en metros entre dos coords
+  function haversineDistance(a, b){
+    const toRad = v => v * Math.PI/180;
+    const R = 6371000;
+    const dLat = toRad(b[0]-a[0]), dLon = toRad(b[1]-a[1]);
+    const lat1 = toRad(a[0]), lat2 = toRad(b[0]);
+    const sinDLat = Math.sin(dLat/2), sinDLon = Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(sinDLat*sinDLat + Math.cos(lat1)*Math.cos(lat2)*sinDLon*sinDLon), Math.sqrt(1 - (sinDLat*sinDLat + Math.cos(lat1)*Math.cos(lat2)*sinDLon*sinDLon)));
+    return R * c;
+  }
+
+  // devuelve factor y nombre de la zona donde está el punto
+  function factorZonaParaPunto(latlng){
+    let factor = 1.0; let zoneName = 'Normal';
+    TRAF_ZONAS.forEach(z => {
+      const d = haversineDistance(latlng, z.coords);
+      if (d <= z.r && z.factor > factor){ factor = z.factor; zoneName = z.name; }
+    });
+    return { factor, zoneName };
+  }
+
+  // calcular tarifa con desglose
+  function calcularTarifaDesglose(distancia_km, duracion_min, veh){
+    const t = VEH_T[veh];
+    const distanciaComponente = distancia_km * t.km;
+    const tiempoComponente = duracion_min * t.min;
+    const subtotal = t.base + distanciaComponente + tiempoComponente;
+    const minimo = t.minimo;
+    const totalAntesMin = Math.max(subtotal, minimo);
+    return { t, distanciaComponente, tiempoComponente, subtotal, totalAntesMin };
+  }
+
+  // mostrar historial
+  function mostrarHistorial(){
+    const arr = JSON.parse(localStorage.getItem('historial_colombia')||'[]');
+    const cont = document.getElementById('historial');
+    cont.innerHTML = arr.slice().reverse().slice(0,5).map(h => (
+      `<div class=\"historial-item\"><b>${h.origen}</b><br><span class=\"small\">→ ${h.destino}</span><br>${h.vehiculo} — <b>$${h.tarifa}</b></div>`
+    )).join('');
+  }
+
+  // guardar historial
+  function guardarHistorial(entry){
+    let arr = JSON.parse(localStorage.getItem('historial_colombia')||'[]');
+    arr.push(entry);
+    if (arr.length>50) arr = arr.slice(-50);
+    localStorage.setItem('historial_colombia', JSON.stringify(arr));
+    mostrarHistorial();
+  }
+
+  // evento calcular
+  btnCalcular.addEventListener('click', async ()=>{
+    btnCalcular.disabled = true;
+    btnCalcular.textContent = 'Calculando...';
+    detallesDiv.innerHTML = '<div class=\"small\">Calculando ruta y tarifa...</div>';
+    try{
+      const coordsO = await geocodeColombia(origenInput);
+      const coordsD = await geocodeColombia(destinoInput);
+
+      if (controlRuta) { map.removeControl(controlRuta); controlRuta = null; }
+
+      controlRuta = L.Routing.control({
+        waypoints: [ L.latLng(coordsO[0], coordsO[1]), L.latLng(coordsD[0], coordsD[1]) ],
+        router: L.Routing.osrmv1({ serviceUrl: 'https://router.project-osrm.org/route/v1' }),
+        lineOptions: { styles: [{ color: '#1976D2', weight: 5 }] },
+        show: false,
+        addWaypoints: false,
+        fitSelectedRoutes: true
+      }).addTo(map);
+
+      controlRuta.on('routesfound', function(e){
+        const route = e.routes[0];
+        const distancia_km = route.summary.totalDistance / 1000;
+        const duracion_min = route.summary.totalTime / 60;
+
+        // Determinar factor por zona (miramos origen y destino y tomamos el mayor factor)
+        const fO = factorZonaParaPunto([coordsO[0], coordsO[1]]);
+        const fD = factorZonaParaPunto([coordsD[0], coordsD[1]]);
+        const factorZona = Math.max(fO.factor, fD.factor);
+        const zonaName = fO.factor >= fD.factor ? fO.zoneName : fD.zoneName;
+
+        // además aplicar factor horario para hora pico
+        const hora = new Date().getHours();
+        let factorHorario = 1.0;
+        if (hora >= 6 && hora <= 9) factorHorario = 1.12;
+        else if (hora >= 16 && hora <= 19) factorHorario = 1.18;
+        else if (hora >= 0 && hora <= 5) factorHorario = 0.95;
+
+        const veh = document.getElementById('vehiculo').value;
+        const desg = calcularTarifaDesglose(distancia_km, duracion_min, veh);
+
+        const multiplicador = factorZona * factorHorario;
+        const tarifaFinal = Math.round(desg.totalAntesMin * multiplicador);
+
+        // mostrar desglose
+        detallesDiv.innerHTML = `
+          <div class=\"line\"><div>Vehículo:</div><div><b>${veh.toUpperCase()}</b></div></div>
+          <div class=\"line\"><div>Distancia:</div><div><b>${distancia_km.toFixed(2)} km</b></div></div>
+          <div class=\"line\"><div>Duración (estimada):</div><div><b>${Math.round(duracion_min)} min</b></div></div>
+          <div class=\"line\"><div>Tarifa base + componentes:</div><div><b>$${Math.round(desg.subtotal)}</b></div></div>
+          <div class=\"line\"><div>Aplicando mínimo:</div><div><b>$${Math.round(desg.totalAntesMin)}</b></div></div>
+          <div class=\"line\"><div>Multiplicador zona:</div><div><b>x${factorZona.toFixed(2)} (${zonaName})</b></div></div>
+          <div class=\"line\"><div>Multiplicador horario:</div><div><b>x${factorHorario.toFixed(2)}</b></div></div>
+          <div class=\"line\" style=\"border-top:1px solid #eef4fb; padding-top:10px;\"><div style=\"font-weight:800\">Tarifa estimada:</div><div style=\"font-weight:900; color:var(--accent)\">$${tarifaFinal}</div></div>
+        `;
+        tagZona.textContent = zonaName;
+
+        // seleccionar frase aleatoria
+        const frase = FRASES[Math.floor(Math.random() * FRASES.length)];
+        const fraseEl = document.getElementById('fraseText');
+        if (fraseEl) fraseEl.textContent = frase;
+
+        // mostrar popup con tarifa grande y frase
+        const popup = document.getElementById('popup');
+        const popupTarifa = document.getElementById('popup-tarifa');
+        const popupFrase = document.getElementById('popup-frase');
+        popupTarifa.textContent = '$' + tarifaFinal;
+        popupFrase.textContent = frase;
+        popup.style.display = 'flex';
+        popup.setAttribute('aria-hidden','false');
+
+        // guardar historial
+        guardarHistorial({ origen: origenInput.value, destino: destinoInput.value, vehiculo: veh, tarifa: tarifaFinal, fecha: (new Date()).toISOString() });
+
+        btnCalcular.disabled = false;
+        btnCalcular.textContent = 'Calcular ruta y tarifa';
+      });
+
+      controlRuta.on('routingerror', function(err){
+        console.error(err);
+        alert('Error al calcular la ruta (OSRM). Intenta con otra dirección dentro de Colombia.');
+        btnCalcular.disabled = false;
+        btnCalcular.textContent = 'Calcular ruta y tarifa';
+      });
+
+    }catch(err){
+      alert('Error: ' + (err.message || err));
+      detallesDiv.innerHTML = '<div class=\"small\">Error al geocodificar o calcular ruta.</div>';
+      btnCalcular.disabled = false;
+      btnCalcular.textContent = 'Calcular ruta y tarifa';
+    }
+  });
+
+  // cerrar popup
+  document.getElementById('popup-cerrar').addEventListener('click', ()=>{ const p=document.getElementById('popup'); p.style.display='none'; p.setAttribute('aria-hidden','true'); });
+  // cerrar con ESC
+  document.addEventListener('keydown', (e)=>{ if(e.key==='Escape'){ const p=document.getElementById('popup'); p.style.display='none'; p.setAttribute('aria-hidden','true'); }});
+
+  // mostrar historial al inicio
+  mostrarHistorial();
+
+// Escuchador para limpiar todo
+document.getElementById('clearButton').addEventListener('click', function() {
+  document.getElementById('origen').value = '';
+  document.getElementById('destino').value = '';
+
+  if (window.routeLayer) {
+    map.removeLayer(window.routeLayer);
+    window.routeLayer = null;
+  }
+
+  if (window.tarifaPopup) {
+    map.closePopup(window.tarifaPopup);
+    window.tarifaPopup = null;
+  }
+
+  if (document.getElementById('fraseMotivadora')) {
+    document.getElementById('fraseMotivadora').innerText = '';
+  }
+});
+
+
+
+  </script>
+  <script src="https://unpkg.com/leaflet-control-geocoder/dist/Control.Geocoder.js"></script>
+</body>
+</html>
+
